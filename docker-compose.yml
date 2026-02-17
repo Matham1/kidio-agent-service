@@ -1,0 +1,97 @@
+# ─────────────────────────────────────────────────────────────────────
+# AI Agent Microservice — Docker Compose
+# ─────────────────────────────────────────────────────────────────────
+# Usage:
+#   docker compose build
+#   docker compose up -d
+#   docker exec -it ollama ollama pull qwen2.5:7b-instruct
+# ─────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── AI Agent (FastAPI + gRPC) ────────────────────────────────────
+  ai-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-agent
+    # Run BOTH servers concurrently via start.sh:
+    command: ["bash", "start.sh"]
+    env_file:
+      - .env
+    ports:
+      - "8002:8002"    # REST / health
+      - "50051:50051"  # gRPC
+    depends_on:
+      ollama:
+        condition: service_started
+      mlflow:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - agent-net
+
+  # ── Ollama (LLM Runtime) ────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+    networks:
+      - agent-net
+    # ┌────────────────────────────────────────────────────────────┐
+    # │  GPU SUPPORT — uncomment the block below when a GPU is    │
+    # │  available on the host.                                   │
+    # └────────────────────────────────────────────────────────────┘
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # ── MLflow (Observability) ──────────────────────────────────────
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.19.0
+    container_name: mlflow
+    command: >
+      mlflow server
+        --host 0.0.0.0
+        --port 5000
+        --backend-store-uri sqlite:///mlflow/mlflow.db
+        --default-artifact-root /mlflow/artifacts
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow-data:/mlflow
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - agent-net
+
+# ── Persistent volumes ─────────────────────────────────────────────
+volumes:
+  ollama-data:
+    driver: local
+  mlflow-data:
+    driver: local
+
+# ── Network ─────────────────────────────────────────────────────────
+networks:
+  agent-net:
+    driver: bridge
