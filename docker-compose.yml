@@ -94,4 +94,5 @@ volumes:
 # ── Network ─────────────────────────────────────────────────────────
 networks:
   agent-net:
+    name: kidio-agent-net
     driver: bridge
